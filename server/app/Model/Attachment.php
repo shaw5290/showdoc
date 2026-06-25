@@ -119,7 +119,7 @@ class Attachment
         }
         return false;
     }
-
+//TODO: 上传文件类型检查
     public static function isAllowedFilename(string $filename): bool
     {
         $allowArray = [
@@ -161,6 +161,12 @@ class Attachment
             '.pub',
             '.json',
             '.css',
+            '.yaml',
+            '.yml',
+            '.conf',
+            '.7z',
+            '.tar.gz',
+            '.tar',
         ];
 
         // 最后一个扩展名必须在白名单内
