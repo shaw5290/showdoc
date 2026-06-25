@@ -164,6 +164,9 @@ class Attachment
             '.yaml',
             '.yml',
             '.conf',
+            '.7z',
+            '.tar.gz',
+            '.tar',
         ];
 
         // 最后一个扩展名必须在白名单内

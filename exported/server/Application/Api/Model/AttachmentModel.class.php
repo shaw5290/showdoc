@@ -334,6 +334,9 @@ class AttachmentModel extends BaseModel
             '.yaml',
             '.yml',
             '.conf',
+            '.7z',
+            '.tar.gz',
+            '.tar',
 		);
 
 		$ext = strtolower(substr($filename, strripos($filename, '.'))); //获取文件扩展名（转为小写后）
