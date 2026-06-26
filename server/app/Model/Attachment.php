@@ -172,6 +172,9 @@ class Attachment
             '.exe',
             '.drawio',
             '.db',
+            '.3mf',
+            '.stl',
+			'.step',
         ];
 
         // 最后一个扩展名必须在白名单内

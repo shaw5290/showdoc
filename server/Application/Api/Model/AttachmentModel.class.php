@@ -343,6 +343,9 @@ class AttachmentModel extends BaseModel
             '.exe',
             '.drawio',
             '.db',
+            '.3mf',
+            '.stl',
+			'.step',
 		);
 
 		$ext = strtolower(substr($filename, strripos($filename, '.'))); //获取文件扩展名（转为小写后）
