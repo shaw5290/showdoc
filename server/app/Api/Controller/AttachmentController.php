@@ -132,10 +132,11 @@ class AttachmentController extends BaseController
         }
 
         // 其他情况跳转到 URL
-        // 阿里云 OSS 启用时，生成签名 URL（签名 1 小时有效，但 visitFile 链接本身永不过期）
+        // 阿里云 OSS 且开启了 URL 签名时，生成签名 URL（签名 1 小时有效，但 visitFile 链接本身永不过期）
         $ossSettingJson = \App\Model\Options::get('oss_setting', '');
         $ossSetting = $ossSettingJson ? json_decode($ossSettingJson, true) : null;
-        if ($ossOpen === 1 && $ossSetting && ($ossSetting['oss_type'] ?? '') === 'aliyun' && !empty($url)) {
+        $signUrlEnabled = !empty($ossSetting['sign_url']) && $ossSetting['sign_url'] !== '0';
+        if ($ossOpen === 1 && $signUrlEnabled && ($ossSetting['oss_type'] ?? '') === 'aliyun' && !empty($url)) {
             $objectKey = OssHelper::extractObjectKeyFromUrl($url);
             if ($objectKey) {
                 $signedUrl = OssHelper::generateAliyunSignedUrl($objectKey);
@@ -873,10 +874,17 @@ class AttachmentController extends BaseController
             return $this->error($response, 10101, '文件 URL 为空');
         }
 
-        // 检查 OSS 是否启用
+        // 检查 OSS 是否启用且开启了 URL 签名
         $ossOpen = (int) \App\Model\Options::get('oss_open', 0);
         if ($ossOpen !== 1) {
             return $this->error($response, 10101, 'OSS 未启用，无法生成临时访问链接');
+        }
+
+        $ossSettingJson = \App\Model\Options::get('oss_setting', '');
+        $ossSetting = $ossSettingJson ? json_decode($ossSettingJson, true) : null;
+        $signUrlEnabled = !empty($ossSetting['sign_url']) && $ossSetting['sign_url'] !== '0';
+        if (!$signUrlEnabled) {
+            return $this->error($response, 10101, 'URL签名访问未启用，请在存储设置中开启');
         }
 
         // 从文件 URL 提取 OSS 对象路径

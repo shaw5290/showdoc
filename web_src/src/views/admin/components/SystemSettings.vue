@@ -321,6 +321,15 @@
                 :placeholder="$t('admin.oss_domain_placeholder')"
               />
             </div>
+
+            <!-- 阿里云 URL 签名开关 -->
+            <div class="form-row" v-if="ossForm.oss_setting.oss_type === 'aliyun'">
+              <label class="form-label">
+                {{ $t('admin.oss_sign_url') }}
+              </label>
+              <CommonSwitch v-model="ossForm.oss_setting.sign_url" />
+              <span class="form-hint">{{ $t('admin.oss_sign_url_tips') }}</span>
+            </div>
           </div>
         </template>
 
@@ -556,7 +565,8 @@ const ossForm = reactive({
     bucket: '',
     subcat: '',
     protocol: 'https',
-    domain: ''
+    domain: '',
+    sign_url: '0'
   }
 })
 

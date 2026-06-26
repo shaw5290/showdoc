@@ -294,6 +294,8 @@ export default {
   oss_subcat_placeholder: '可选，例如: showdoc',
   oss_domain: 'OSS绑定域名(选填)',
   oss_domain_placeholder: '自定义域名，如: https://cdn.example.com',
+  oss_sign_url: 'URL签名访问',
+  oss_sign_url_tips: '开启后，访问OSS文件时会生成带签名和过期时间的临时URL，适用于私有Bucket',
   // 首页设置
   home_page: '首页设置',
   home_page_tips: '设置网站首页的显示方式',

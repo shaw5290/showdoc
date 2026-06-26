@@ -282,6 +282,8 @@ export default {
   oss_subcat_placeholder: 'Optional, e.g., showdoc',
   oss_domain: 'OSS Custom Domain (optional)',
   oss_domain_placeholder: 'Custom domain, e.g., https://cdn.example.com',
+  oss_sign_url: 'URL Signature Access',
+  oss_sign_url_tips: 'When enabled, a signed URL with expiration will be generated for OSS file access, suitable for private buckets',
   // Homepage Settings
   home_page: 'Homepage Settings',
   home_page_tips: 'Set the display mode of the website homepage',
