@@ -167,6 +167,11 @@ class Attachment
             '.7z',
             '.tar.gz',
             '.tar',
+            '.md',
+            '.xmind',
+            '.exe',
+            '.drawio',
+            '.db',
         ];
 
         // 最后一个扩展名必须在白名单内

@@ -321,6 +321,7 @@ class AttachmentModel extends BaseModel
 		return false;
 	}
 
+//TODO: 上传文件类型检查
 	// 判断上传的文件扩展名是否处于白名单内
 	public function isAllowedFilename($filename)
 	{
@@ -337,6 +338,11 @@ class AttachmentModel extends BaseModel
             '.7z',
             '.tar.gz',
             '.tar',
+            '.md',
+            '.xmind',
+            '.exe',
+            '.drawio',
+            '.db',
 		);
 
 		$ext = strtolower(substr($filename, strripos($filename, '.'))); //获取文件扩展名（转为小写后）
