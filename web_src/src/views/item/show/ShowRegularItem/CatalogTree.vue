@@ -57,6 +57,7 @@
               />
               <i v-else class="far fa-folder-closed" />
             </template>
+            <i v-else-if="dataRef?.page_type === 'sheet'" class="far fa-table-cells" />
             <i v-else class="far fa-file-lines" />
           </span>
           <!-- 节点标题 -->
@@ -1188,7 +1189,8 @@ onMounted(() => {
   }
 
   // 文件图标颜色 - 使用主色
-  .fa-file-lines {
+  .fa-file-lines,
+  .fa-table-cells {
     color: var(--color-active);
   }
 }
