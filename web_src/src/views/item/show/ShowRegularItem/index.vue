@@ -758,8 +758,9 @@ const enterSheetEditMode = async () => {
       editPageId: currentPageId.value
     })
 
-    // 编辑完成后刷新页面内容
+    // 编辑完成后刷新页面内容（清除防重复记录，强制刷新）
     if (result) {
+      delete _lastFetchTime.value[currentPageId.value]
       handleGetPageContent(currentPageId.value, currentPageType.value)
     }
   } catch (error) {
@@ -776,8 +777,14 @@ const initSheetEditor = () => {
     if (!container) return
 
     if (spreadsheetObj.value) {
-      spreadsheetObj.value.destroy()
+      try {
+        spreadsheetObj.value.destroy()
+      } catch (e) {
+        // ignore
+      }
       spreadsheetObj.value = null
+      // 清空容器残留 DOM，确保新实例在干净容器中创建
+      container.innerHTML = ''
     }
 
     spreadsheetObj.value = window.x_spreadsheet(container, {
