@@ -111,13 +111,15 @@ interface Props {
   itemInfo?: any
   pageInfo?: any
   searchItem?: (keyword: string) => void
+  editHandler?: (() => void) | null
 }
 
 const props = withDefaults(defineProps<Props>(), {
   pageId: 0,
   itemInfo: () => ({}),
   pageInfo: () => ({}),
-  searchItem: () => {}
+  searchItem: () => {},
+  editHandler: null
 })
 
 // Emits
@@ -206,6 +208,13 @@ const handleDropdownSelect = (item: DropdownMenuItem) => {
 
 // Methods
 const handleEdit = async () => {
+  console.log('handleEdit clicked, editHandler:', !!props.editHandler, 'pageId:', props.pageId, 'itemInfo?.item_edit:', props.itemInfo?.item_edit)
+  // 如果有自定义编辑处理器，优先使用
+  if (props.editHandler) {
+    props.editHandler()
+    return
+  }
+  
   if (props.pageId && props.itemInfo?.item_id) {
     const result = await EditPageModal({
       itemId: props.itemInfo.item_id,

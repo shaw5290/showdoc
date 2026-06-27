@@ -7,6 +7,17 @@ export const itemMenuDataToTreeData = (menu: any): any[] => {
   // 处理页面（根目录页面）
   if (menu.pages && Array.isArray(menu.pages) && menu.pages.length > 0) {
     menu.pages.forEach((page: any) => {
+      let pageType = 'doc'
+      if (page.ext_info) {
+        try {
+          const extInfo = JSON.parse(page.ext_info)
+          if (extInfo.page_type) {
+            pageType = extInfo.page_type
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
       treeData.push({
         title: page.page_title,
         id: `page_${page.page_id}`,
@@ -14,6 +25,7 @@ export const itemMenuDataToTreeData = (menu: any): any[] => {
         page_cat_id: 0,
         key: `page_${page.page_id}`,
         type: 'page',
+        page_type: pageType,
         is_draft: page.is_draft
       })
     })
@@ -37,14 +49,27 @@ export const itemMenuDataToTreeData = (menu: any): any[] => {
       // 如果目录下有页面，则添加页面
       if (catData[index].pages && Array.isArray(catData[index].pages) && catData[index].pages.length > 0) {
         for (let k = 0; k < catData[index].pages.length; k++) {
+          const pageItem = catData[index].pages[k]
+          let pageType = 'doc'
+          if (pageItem.ext_info) {
+            try {
+              const extInfo = JSON.parse(pageItem.ext_info)
+              if (extInfo.page_type) {
+                pageType = extInfo.page_type
+              }
+            } catch (e) {
+              // ignore
+            }
+          }
           oneCat.children.push({
-            title: catData[index].pages[k].page_title,
-            id: `page_${catData[index].pages[k].page_id}`,
-            page_id: catData[index].pages[k].page_id,
+            title: pageItem.page_title,
+            id: `page_${pageItem.page_id}`,
+            page_id: pageItem.page_id,
             page_cat_id: catData[index].cat_id,
-            key: `page_${catData[index].pages[k].page_id}`,
+            key: `page_${pageItem.page_id}`,
             type: 'page',
-            is_draft: catData[index].pages[k].is_draft
+            page_type: pageType,
+            is_draft: pageItem.is_draft
           })
         }
       }

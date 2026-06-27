@@ -38,7 +38,7 @@
       </template>
 
       <!-- 节点内容 -->
-      <template #title="{ key, title, type, children }">
+      <template #title="{ key, title, type, children, dataRef }">
         <div
           :class="[
             'tree-node-content',
@@ -109,7 +109,7 @@ import HistoryModal from '@/views/modals/page/HistoryModal/index'
 interface Props {
   itemInfo?: any
   keyword?: string
-  getPageContent?: (pageId: number) => void
+  getPageContent?: (pageId: number, pageType?: string) => void
   searchItem?: (keyword: string) => void
 }
 
@@ -162,6 +162,11 @@ const contextMenuList = computed(() => {
         icon: ['far', 'fa-plus'],
         text: t('page.new_page'),
         onclick: () => handleAddSubPage(node),
+      },
+      {
+        icon: ['far', 'fa-table-cells'],
+        text: t('page.new_sheet'),
+        onclick: () => handleAddSubSheet(node),
       },
       {
         icon: ['far', 'fa-folder-tree'],
@@ -297,7 +302,10 @@ const handleNodeClick = (
     const node = currentNode.value
     if (node && node.page_id) {
       selectedKeys.value = [key]
-      props.getPageContent(node.page_id)
+      // 从原始节点数据中获取 page_type
+      const finalPageType = node.page_type || 'doc'
+      console.log('点击页面节点，page_type:', finalPageType)
+      props.getPageContent(node.page_id, finalPageType)
 
       // 更新URL (使用Hash模式)
       const domain = props.itemInfo.item_domain || props.itemInfo.item_id
@@ -546,6 +554,59 @@ const handleAddSubPage = async (_node: any) => {
     }
   } catch (error) {
     console.error('添加子页面失败:', error)
+  }
+}
+
+// 新建表格页面
+const handleAddSubSheet = async (_node: any) => {
+  try {
+    const sheetName = await PromptModal(
+      t('page.new_sheet'),
+      '',
+      t('page.input_page_title')
+    )
+
+    if (!sheetName || !sheetName.trim()) return
+
+    // 初始空表格数据
+    const defaultSheetData = JSON.stringify([{
+      name: 'Sheet1',
+      rows: {
+        '0': {
+          cells: {
+            '0': { text: '' }
+          }
+        }
+      }
+    }])
+
+    const result = await request(
+      '/api/page/save',
+      {
+        page_id: 0,
+        item_id: props.itemInfo.item_id,
+        cat_id: _node.cat_id || 0,
+        page_title: sheetName.trim(),
+        page_content: defaultSheetData,
+        ext_info: JSON.stringify({ page_type: 'sheet' })
+      },
+      'post',
+      false
+    )
+
+    if (result.error_code === 0) {
+      message.success(t('common.save_success'))
+      emit('reloadItem')
+      // 跳转到新创建的表格页面
+      const newPageId = result.data?.page_id
+      if (newPageId && props.getPageContent) {
+        props.getPageContent(newPageId, 'sheet')
+      }
+    } else {
+      await AlertModal(result.error_message || t('common.op_failed'))
+    }
+  } catch (error) {
+    console.error('新建表格失败:', error)
   }
 }
 

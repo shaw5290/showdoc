@@ -6,6 +6,12 @@
       </div>
     </a-tooltip>
 
+    <a-tooltip :title="$t('page.new_sheet')" placement="top">
+      <div class="action-item" @click="handleCreateSheet">
+        <i class="far fa-table-cells"></i>
+      </div>
+    </a-tooltip>
+
     <a-tooltip :title="$t('page.clone_page')" placement="top">
       <div class="action-item" @click="handleClonePage">
         <i class="far fa-clone"></i>
@@ -141,6 +147,59 @@ const handleCreatePage = async () => {
     }
   } catch (error) {
     console.error('打开页面编辑器失败:', error)
+  }
+}
+
+// 新建表格页面
+const handleCreateSheet = async () => {
+  if (!props.itemId) {
+    Message.info(t('common.please_select_item'))
+    return
+  }
+
+  try {
+    const sheetName = await PromptModal(
+      t('page.new_sheet'),
+      '',
+      t('page.input_page_title')
+    )
+
+    if (!sheetName || !sheetName.trim()) return
+
+    // 初始空表格数据
+    const defaultSheetData = JSON.stringify([{
+      name: 'Sheet1',
+      rows: {
+        '0': {
+          cells: {
+            '0': { text: '' }
+          }
+        }
+      }
+    }])
+
+    const result = await request(
+      '/api/page/save',
+      {
+        page_id: 0,
+        item_id: props.itemId,
+        cat_id: 0,
+        page_title: sheetName.trim(),
+        page_content: defaultSheetData,
+        ext_info: JSON.stringify({ page_type: 'sheet' })
+      },
+      'post',
+      false
+    )
+
+    if (result.error_code === 0) {
+      Message.success(t('common.save_success'))
+      emit('reloadItem')
+    } else {
+      await AlertModal(result.error_message || t('common.op_failed'))
+    }
+  } catch (error) {
+    console.error('新建表格失败:', error)
   }
 }
 

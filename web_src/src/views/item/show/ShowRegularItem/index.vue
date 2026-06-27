@@ -11,6 +11,7 @@
           :item-info="itemInfo"
           :page-info="pageInfo"
           :search-item="handleSearch"
+          :edit-handler="currentPageType === 'sheet' ? enterSheetEditMode : undefined"
         />
       </template>
     </ItemHeader>
@@ -27,7 +28,7 @@
       @exit-fullscreen="exitFullscreen"
     />
 
-    <!-- 
+    <!--
       移动端目录抽屉
       注意：Ant Design Vue 3.x 使用 :visible 属性控制显示
       不要使用 v-model:open（那是 4.x 的语法）
@@ -90,7 +91,7 @@
       </div>
 
       <!-- 中间内容区 -->
-      <div id="content-side">
+      <div id="content-side" :class="{ 'sheet-full-width': currentPageType === 'sheet' }">
         <div id="p-content">
           <!-- 搜索面包屑（仅在搜索时显示） -->
           <SearchBreadcrumb
@@ -109,7 +110,7 @@
             </a-tooltip>
             <span class="doc-actions">
               <a-tooltip
-                v-if="pageContent && !isMobile()"
+                v-if="pageContent && !isMobile() && currentPageType !== 'sheet'"
                 :title="$t('page.show.copy_as_markdown_tooltip')"
               >
                 <i
@@ -118,12 +119,12 @@
                 />
               </a-tooltip>
               <i
-                v-if="attachmentCount"
+                v-if="attachmentCount && currentPageType !== 'sheet'"
                 class="far fa-paperclip attachment-icon"
                 @click="handleShowAttachment"
               />
               <i
-                v-if="currentPageId && !isMobile()"
+                v-if="currentPageId && !isMobile() && currentPageType !== 'sheet'"
                 :class="isFullPage ? 'far fa-compress' : 'far fa-expand'"
                 class="full-page-icon"
                 @click="toggleFullPage"
@@ -132,11 +133,16 @@
           </div>
 
           <!-- 页面内容 -->
-          <div class="doc-body">
+          <div class="doc-body" :class="{ 'sheet-body': currentPageType === 'sheet' }">
             <div class="page-content-main" id="page-content-main">
+              <!-- 表格页面（只读预览） -->
+              <div v-if="currentPageType === 'sheet'" class="sheet-container">
+                <div id="sheet-inline-editor" class="sheet-editor"></div>
+              </div>
+
               <!-- Markdown 内容渲染（纯预览模式） -->
               <EditormdEditor
-                v-if="currentPageId"
+                v-else-if="currentPageId"
                 :key="`${currentPageId}-${isFullPage}`"
                 v-model="pageContent"
                 mode="preview"
@@ -178,7 +184,7 @@
       </div>
 
       <!-- 右侧目录区（TOC） -->
-      <div id="right-side" v-if="!isMobile() && !isFullPage">
+      <div id="right-side" v-if="!isMobile() && !isFullPage && currentPageType !== 'sheet'">
         <Toc :key="tocKey" />
       </div>
     </div>
@@ -196,16 +202,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { message } from 'ant-design-vue'
-import { useItemStore } from '@/store'
+import { useItemStore, useAppStore } from '@/store'
 import { renderPageContent } from '@/models/page'
 import { toggleNthTaskCheckbox } from '@/models/markdown'
 import { getItem } from '@/models/item'
 import request from '@/utils/request'
-import { copyToClipboard } from '@/utils/tools'
+import { copyToClipboard, unescapeHTML } from '@/utils/tools'
+import { getStaticPath } from '@/utils/system'
 // 引入 ShowDoc 编辑器适配器（包装底层 EditormdEditor 组件）
 // 适配器提供了 ShowDoc 特定的默认配置和事件处理
 import EditormdEditor from '@/components/EditormdEditor/ShowdocAdapter.vue'
@@ -218,6 +225,7 @@ import CatalogTree from './CatalogTree.vue'
 import CatalogActions from './CatalogActions.vue'
 import SearchBreadcrumb from '@/components/SearchBreadcrumb.vue'
 import AttachmentListModal from '@/views/modals/page/AttachmentListModal/index'
+import EditSheetModal from '@/views/modals/page/EditSheetModal/index'
 import PageComment from './components/PageComment.vue'
 import PageFeedback from './components/PageFeedback.vue'
 import Toc from '@/components/Toc.vue'
@@ -269,6 +277,21 @@ const tocKey = ref(0) // 用于强制重新挂载 Toc 组件
 const _lastFetchTime = ref<Record<number, number>>({}) // 记录每个页面ID上次请求时间
 const aiEnabled = ref(false) // 项目是否开启了 AI 知识库
 const lastLoadedPageId = ref(0) // 记录上一次加载的页面ID，用于移动端抽屉控制
+const sheetPageMode = ref(false) // 表格页面全屏模式（已废弃，改用 currentPageType）
+const currentPageType = ref<'doc' | 'sheet'>('doc') // 当前页面类型：doc-文档，sheet-表格
+
+// 表格相关状态
+const spreadsheetObj = ref<any>(null)
+const spreadsheetData = ref<any>({})
+const sheetIsEditable = ref(0)
+const sheetIsLock = ref(0)
+const sheetIntervalId = ref(0)
+const sheetDepsLoaded = ref(false)
+const sheetOriginalTheme = ref<'light' | 'dark'>('light')
+const sheetIsEditMode = ref(false) // 表格是否处于编辑模式
+
+declare const x_spreadsheet: any
+declare const XLSX: any
 
 // Computed
 // 判断是否为移动设备或全屏模式
@@ -339,7 +362,7 @@ const highlightKeyword = (text: string, keyword: string): string => {
     .join('')
 }
 
-const handleGetPageContent = async (pageId: number) => {
+const handleGetPageContent = async (pageId: number, pageType?: string) => {
   if (pageId <= 0) return
 
   // 移动端：只有页面ID变化时才关闭抽屉
@@ -375,17 +398,21 @@ const handleGetPageContent = async (pageId: number) => {
     const data = await request('/api/page/info', params, 'post', false)
 
     if (data.error_code === 0 && data.data) {
-      let content = renderPageContent(
-        data.data.page_content || '',
-        itemInfo.value.global_param
-      )
-
-      // 如果是搜索结果，对内容进行关键词高亮
-      if (hasKeyword && searchKeyword.value) {
-        content = highlightKeyword(content, searchKeyword.value)
+      // 解析页面类型
+      let pType = pageType || 'doc'
+      console.log('初始 pType:', pType, 'ext_info:', data.data.ext_info)
+      if (data.data.ext_info) {
+        try {
+          const extInfo = JSON.parse(data.data.ext_info)
+          console.log('解析后的 extInfo:', extInfo)
+          if (extInfo.page_type) {
+            pType = extInfo.page_type
+          }
+        } catch (e) {
+          console.error('解析 ext_info 失败:', e)
+        }
       }
-
-      pageContent.value = content
+      console.log('最终页面类型 pType:', pType)
 
       itemStore.setOpenCatId(data.data.cat_id)
       pageTitle.value = data.data.page_title
@@ -406,6 +433,35 @@ const handleGetPageContent = async (pageId: number) => {
       if (route.path !== newPath) {
         router.replace(newPath)
       }
+
+      // 表格页面：设置类型并初始化表格
+      if (pType === 'sheet') {
+        currentPageId.value = pageId
+        currentPageType.value = 'sheet'
+        pageContent.value = ''
+        document.title = `${pageTitle.value}--ShowDoc`
+        // 延迟初始化表格，等待 DOM 渲染
+        setTimeout(() => {
+          initSheetPage(pageId, data.data.page_content)
+        }, 100)
+        return
+      }
+
+      // 普通 Markdown 页面：先销毁表格，再切换类型
+      destroySheet()
+      currentPageType.value = 'doc'
+
+      let content = renderPageContent(
+        data.data.page_content || '',
+        itemInfo.value.global_param
+      )
+
+      // 如果是搜索结果，对内容进行关键词高亮
+      if (hasKeyword && searchKeyword.value) {
+        content = highlightKeyword(content, searchKeyword.value)
+      }
+
+      pageContent.value = content
 
       // 延迟更新 currentPageId，避免组件频繁卸载/挂载
       setTimeout(() => {
@@ -522,6 +578,366 @@ const handleTaskToggle = ({
   pageContent.value = toggleNthTaskCheckbox(pageContent.value, index, checked)
   scheduleSave()
 }
+
+// ========== 表格页面相关方法 ==========
+
+// 初始化表格页面（只读预览）
+const initSheetPage = async (pageId: number, pageContentRaw: string) => {
+  // 解析表格数据
+  let sheetData: any = {}
+  if (pageContentRaw) {
+    try {
+      sheetData = JSON.parse(unescapeHTML(pageContentRaw))
+    } catch (e) {
+      console.error('解析表格数据失败:', e)
+      sheetData = {}
+    }
+  }
+  spreadsheetData.value = sheetData
+
+  // 动态加载xspreadsheet依赖（仅在首次使用时加载）
+  if (!sheetDepsLoaded.value) {
+    await loadSheetDependencies()
+  }
+
+  // 等待 DOM 渲染完成
+  await nextTick()
+
+  if (window.x_spreadsheet) {
+    // 设置语言
+    try {
+      const { locale } = useI18n()
+      if (typeof window.x_spreadsheet.locale === 'function') {
+        if (locale.value === 'en-US') {
+          window.x_spreadsheet.locale('en')
+        } else {
+          window.x_spreadsheet.locale('zh-cn')
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    // 只读模式预览
+    sheetIsEditable.value = 0
+    initSheetEditor()
+  } else {
+    console.error('x_spreadsheet 未加载')
+    message.error(t('item.sheet_load_failed'))
+  }
+}
+
+// 加载表格依赖
+const loadSheetDependencies = async () => {
+  if (sheetDepsLoaded.value) return
+
+  try {
+    const staticPath = getStaticPath()
+
+    // 加载 CSS（避免重复添加）
+    const cssHref = `${staticPath}xspreadsheet/xspreadsheet.css`
+    if (!document.querySelector(`link[href="${cssHref}"]`)) {
+      const link = document.createElement('link')
+      link.rel = 'stylesheet'
+      link.href = cssHref
+      document.head.appendChild(link)
+    }
+
+    // 加载 JS（避免重复添加）
+    if (typeof window.x_spreadsheet === 'undefined') {
+      await loadScript(`${staticPath}xspreadsheet/xspreadsheet.js`)
+    }
+
+    await Promise.all([
+      loadScript(`${staticPath}xspreadsheet/locale/zh-cn.js`),
+      loadScript(`${staticPath}xspreadsheet/locale/en.js`)
+    ])
+
+    if (typeof window.XLSX === 'undefined') {
+      await loadScript(`${staticPath}xspreadsheet/xlsx.full.min.js`)
+    }
+
+    sheetDepsLoaded.value = true
+  } catch (error) {
+    console.error('加载表格依赖失败:', error)
+  }
+}
+
+// 动态加载脚本
+const loadScript = (src: string): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = src
+    script.onload = () => resolve()
+    script.onerror = reject
+    document.head.appendChild(script)
+  })
+}
+
+// 检查编辑锁
+const checkSheetLock = async (pageId: number) => {
+  const res = await request('/api/page/isLock', {
+    page_id: pageId
+  })
+
+  if (res.data.lock > 0) {
+    if (res.data.is_cur_user > 0) {
+      sheetIsLock.value = 1
+      sheetIsEditable.value = 1
+      initSheetEditor()
+      startSheetHeartBeat()
+    } else {
+      message.error(t('item.locking') + res.data.lock_username)
+      sheetIsEditable.value = 0
+      initSheetEditor()
+    }
+  } else {
+    setSheetLock(pageId)
+    sheetIsEditable.value = 1
+    initSheetEditor()
+    startSheetHeartBeat()
+  }
+}
+
+// 加锁
+const setSheetLock = async (pageId: number) => {
+  if (pageId > 0 && itemInfo.value?.item_id) {
+    await request('/api/page/setLock', {
+      page_id: pageId,
+      item_id: itemInfo.value.item_id
+    })
+    sheetIsLock.value = 1
+  }
+}
+
+// 解锁
+const unlockSheet = async () => {
+  if (!sheetIsLock.value) return
+  if (!currentPageId.value || !itemInfo.value?.item_id) return
+  await request('/api/page/setLock', {
+    page_id: currentPageId.value,
+    item_id: itemInfo.value.item_id,
+    lock_to: 1000
+  })
+  sheetIsLock.value = 0
+}
+
+// 心跳保持锁定
+const startSheetHeartBeat = () => {
+  sheetIntervalId.value = window.setInterval(() => {
+    if (sheetIsLock.value && currentPageId.value) {
+      setSheetLock(currentPageId.value)
+    }
+  }, 3 * 60 * 1000)
+}
+
+// 关闭时解锁
+const unLockSheetOnClose = () => {
+  if (sheetIsLock.value && currentPageId.value && itemInfo.value?.item_id) {
+    const formData = new FormData()
+    formData.append('page_id', String(currentPageId.value))
+    formData.append('item_id', String(itemInfo.value.item_id))
+    formData.append('lock_to', '1000')
+    navigator.sendBeacon('/server/?s=/api/page/setLock', formData)
+  }
+}
+
+// 进入表格编辑模式（弹出模态框）
+const enterSheetEditMode = async () => {
+  console.log('enterSheetEditMode called, currentPageId:', currentPageId.value, 'isItemEditable:', isItemEditable.value)
+  if (!currentPageId.value) return
+
+  if (!isItemEditable.value) {
+    message.error(t('item.no_edit_permission'))
+    return
+  }
+
+  try {
+    const result = await EditSheetModal({
+      itemId: itemInfo.value?.item_id,
+      editPageId: currentPageId.value
+    })
+
+    // 编辑完成后刷新页面内容
+    if (result) {
+      handleGetPageContent(currentPageId.value, currentPageType.value)
+    }
+  } catch (error) {
+    console.error('EditSheetModal error:', error)
+  }
+}
+
+// 初始化表格编辑器（只读预览）
+const initSheetEditor = () => {
+  try {
+    if (!window.x_spreadsheet) return
+
+    const container = document.getElementById('sheet-inline-editor')
+    if (!container) return
+
+    if (spreadsheetObj.value) {
+      spreadsheetObj.value.destroy()
+      spreadsheetObj.value = null
+    }
+
+    spreadsheetObj.value = window.x_spreadsheet(container, {
+      mode: 'read',
+      showToolbar: false,
+      showGrid: true,
+      showBottomBar: false,
+      row: {
+        len: 800,
+        height: 25
+      },
+      view: {
+        height: () => container.offsetHeight,
+        width: () => container.offsetWidth
+      }
+    }).loadData(spreadsheetData.value)
+
+    // 只移除底部的"添加sheet"加号按钮，保留sheet标签页
+    // x-spreadsheet不支持showBottomBar配置，通过实例API精确移除加号按钮
+    try {
+      if (spreadsheetObj.value && spreadsheetObj.value.bottombar) {
+        const menuEl = spreadsheetObj.value.bottombar.menuEl
+        if (menuEl && menuEl.el && menuEl.el.children[0] && menuEl.el.children[0].children[0]) {
+          // 加号按钮是menuEl中的第一个子元素
+          menuEl.el.children[0].removeChild(menuEl.el.children[0].children[0])
+        }
+      }
+    } catch (e) {
+      // 实例属性方式失败时，兜底通过DOM查询移除加号按钮
+      const addBtn = container.querySelector('.x-spreadsheet-icon-img.add')
+      if (addBtn && addBtn.parentElement) {
+        addBtn.parentElement.remove()
+      }
+    }
+  } catch (e) {
+    console.error('初始化表格预览失败:', e)
+  }
+}
+
+// 表格保存
+let _sheetSaveTimer: number | null = null
+const scheduleSheetSave = () => {
+  if (_sheetSaveTimer) {
+    clearTimeout(_sheetSaveTimer)
+  }
+  _sheetSaveTimer = window.setTimeout(() => {
+    handleSheetSave()
+  }, 2000)
+}
+
+const handleSheetSave = async () => {
+  if (!spreadsheetObj.value || !currentPageId.value) return
+
+  try {
+    await request('/api/page/save', {
+      page_id: currentPageId.value,
+      page_title: pageTitle.value,
+      item_id: itemId.value,
+      is_urlencode: 1,
+      page_content: encodeURIComponent(
+        JSON.stringify(spreadsheetObj.value.getData())
+      ),
+      // 保留表格页面的 page_type
+      ext_info: JSON.stringify({ page_type: 'sheet' })
+    })
+
+    // 删除草稿
+    const pkey = 'page_sheet_content_' + currentPageId.value
+    localStorage.removeItem(pkey)
+
+    message.success(t('common.save_success'))
+  } catch (error) {
+    console.error('保存失败:', error)
+  }
+}
+
+// 表格导出
+const handleSheetExport = () => {
+  if (!spreadsheetObj.value) return
+
+  const xtos = (sdata: any) => {
+    const out = XLSX.utils.book_new()
+    sdata.forEach((xws: any) => {
+      const aoa: any[][] = [[]]
+      const rowobj = xws.rows
+      for (let ri = 0; ri < rowobj.len; ++ri) {
+        const row = rowobj[ri]
+        if (!row) continue
+        aoa[ri] = []
+        Object.keys(row.cells).forEach((k) => {
+          const idx = +k
+          if (isNaN(idx)) return
+          aoa[ri][idx] = row.cells[k].text
+        })
+      }
+      const ws = XLSX.utils.aoa_to_sheet(aoa)
+      XLSX.utils.book_append_sheet(out, ws, xws.name)
+    })
+    return out
+  }
+
+  const newWb = xtos(spreadsheetObj.value.getData())
+  XLSX.writeFile(newWb, `${pageTitle.value || 'showdoc'}.xlsx`)
+}
+
+// 表格导入
+const handleSheetImport = (file: File) => {
+  if (!file) return false
+
+  const stox = (wb: any) => {
+    const out: any[] = []
+    wb.SheetNames.forEach((name: string) => {
+      const o = { name: name, rows: {} }
+      const ws = wb.Sheets[name]
+      const aoa = XLSX.utils.sheet_to_json(ws, { raw: false, header: 1 })
+      aoa.forEach((r: any, i: number) => {
+        const cells: any = {}
+        ;(r as any[]).forEach((c: any, j: number) => {
+          cells[j] = { text: c }
+        })
+        o.rows[i] = { cells: cells }
+      })
+      out.push(o)
+    })
+    return out
+  }
+
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    const data = e.target?.result
+    if (!data) return
+    const mdata = stox(XLSX.read(data, { type: 'array' }))
+
+    if (mdata && spreadsheetObj.value) {
+      spreadsheetObj.value.loadData(mdata)
+      message.success(t('common.op_success'))
+      setTimeout(() => {
+        handleSheetSave()
+      }, 500)
+    }
+  }
+  reader.readAsArrayBuffer(file)
+
+  return false // 阻止自动上传
+}
+
+// 销毁表格
+const destroySheet = () => {
+  // 销毁 xspreadsheet 实例
+  if (spreadsheetObj.value) {
+    try {
+      spreadsheetObj.value.destroy()
+    } catch (e) {
+      // ignore
+    }
+    spreadsheetObj.value = null
+  }
+}
+
+// ========== END 表格页面相关方法 ==========
 
 const scheduleSave = () => {
   if (_taskSaveTimer.value) {
@@ -695,6 +1111,33 @@ onUnmounted(() => {
   min-height: 100vh;
 }
 
+// 内联表格容器
+.sheet-full-width {
+  max-width: none !important;
+  padding: 0 !important;
+}
+
+.sheet-container {
+  width: 100%;
+  height: calc(100vh - 257px);
+  background: #fff;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+
+  .sheet-editor {
+    width: 100%;
+    flex: 1;
+    overflow: hidden;
+
+    #sheet-inline-editor {
+      width: 100%;
+      height: 100%;
+    }
+  }
+}
+
 .doc-container {
   display: flex;
   gap: 24px; // 适度增加间距（原来可能是 20px）
@@ -828,6 +1271,11 @@ onUnmounted(() => {
 
 .page-content-main {
   margin-bottom: 60px;
+
+  // 表格页面不需要底部边距
+  .sheet-body & {
+    margin-bottom: 0;
+  }
 
   // Markdown 内容样式已移至 EditormdEditor/themes/base.css
   // 可通过该文件复用到其他项目（如 RunAPI）
