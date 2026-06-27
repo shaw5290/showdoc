@@ -162,19 +162,23 @@
               </div>
             </div>
 
-            <!-- 页面反馈 -->
-            <div id="feedback-area">
+            <!-- 页面反馈（未开启时不渲染，避免占位） -->
+            <div
+              id="feedback-area"
+              v-if="currentPageId && itemInfo && !isMobile() && (itemInfo.allow_feedback == 1 || itemInfo.allow_feedback === true)"
+            >
               <PageFeedback
-                v-if="currentPageId && itemInfo && !isMobile()"
                 :page-id="currentPageId"
                 :item-info="itemInfo"
               />
             </div>
 
-            <!-- 页面评论（移动端隐藏） -->
-            <div id="comment-area" v-if="!isMobile()">
+            <!-- 页面评论（移动端隐藏，未开启时不渲染，避免占位） -->
+            <div
+              id="comment-area"
+              v-if="currentPageId && itemInfo && !isMobile() && (itemInfo.allow_comment == 1 || itemInfo.allow_comment === true)"
+            >
               <PageComment
-                v-if="currentPageId && itemInfo"
                 :page-id="currentPageId"
                 :item-info="itemInfo"
               />
