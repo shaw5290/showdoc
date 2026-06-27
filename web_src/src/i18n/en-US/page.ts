@@ -105,6 +105,9 @@ export default {
   my_template: 'My Template',
   item_template: 'Share to This Item Template',
   select_template: 'Select Template',
+  import_success: 'Import successful',
+  insert_template_success: 'Template inserted successfully',
+  template_not_sheet: 'This template is not applicable to sheet pages',
   // Additional page keys
   minimize: 'Minimize',
   finish: 'Finish',

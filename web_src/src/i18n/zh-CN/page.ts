@@ -105,6 +105,9 @@ export default {
   item_id_required: '项目ID不能为空',
   catalog_selected: '已选择目录',
   restore_success: '恢复成功',
+  import_success: '导入成功',
+  insert_template_success: '模板插入成功',
+  template_not_sheet: '该模板不适用于表格页面',
   document_tools: '文档工具',
   // 其他编辑相关
   minimize: '最小化',

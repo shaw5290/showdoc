@@ -26,6 +26,9 @@
             @keyup.enter="isEditingTitle = false"
           />
 
+          <!-- 草稿标签 -->
+          <a-tag v-if="isDraft" color="orange" class="draft-tag">{{ $t('page.draft') }}</a-tag>
+
           <!-- 目录选择 -->
           <a-tooltip :title="$t('page.select_catalog')">
             <span class="catalog-selector" @click="handleShowSelectCatalog">
@@ -85,6 +88,14 @@
           />
         </a-upload>
 
+        <!-- 插入模板 -->
+        <CommonButton
+          :text="$t('page.insert_template')"
+          :left-icon="['fas', 'fa-plug']"
+          :theme="'light'"
+          @click="handleOpenTemplateList"
+        />
+
         <!-- 附件 -->
         <a-badge
           :count="attachmentCount"
@@ -132,6 +143,9 @@ import AlertModal from '@/components/AlertModal'
 import AttachmentListModal from '@/views/modals/page/AttachmentListModal/index'
 import HistoryModal from '@/views/modals/page/HistoryModal/index'
 import CatalogSelectModal from '@/views/modals/catalog/SelectCatalogModal/index'
+import SaveTemplateModal from '@/views/modals/page/SaveTemplateModal/index'
+import TemplateSelectModal from '@/views/modals/page/TemplateSelectModal/index'
+import NotifyModal from '@/views/modals/page/NotifyModal/index'
 
 declare const x_spreadsheet: any
 declare const XLSX: any
@@ -160,6 +174,8 @@ const sheetIsLock = ref(0)
 const sheetIntervalId = ref(0)
 const isEditingTitle = ref(false)
 const attachmentCount = ref(0)
+const isDraft = ref(false)
+const isLocked = ref(false)
 
 // 表格编辑需要浅色主题
 if (appStore.theme === 'dark') {
@@ -172,23 +188,53 @@ const catalogName = computed(() => {
   return cat ? cat.title : t('catalog.root_catalog')
 })
 
-// 保存菜单
-const saveMenuList = computed<ContextmenuModalItemInterface[]>(() => [
-  {
-    icon: ['fas', 'fa-save'],
-    text: t('page.save'),
-    value: 'save',
-    onclick: () => handleSave(),
-  },
-  {
-    icon: isLocked.value ? ['fas', 'fa-unlock'] : ['fas', 'fa-lock'],
-    text: isLocked.value ? t('page.unlock') : t('page.lock_edit'),
-    value: 'lock',
-    onclick: handleToggleLock,
-  },
-])
+// 保存菜单（与MD编辑一致）
+const saveMenuList = computed<ContextmenuModalItemInterface[]>(() => {
+  const menu: ContextmenuModalItemInterface[] = []
 
-const isLocked = ref(false)
+  if (isDraft.value) {
+    // 当前是草稿，显示"保存并发布"
+    menu.push({
+      icon: ['fas', 'fa-paper-plane'],
+      text: t('page.save_and_publish'),
+      value: 'publish',
+      tooltip: t('page.save_and_publish_tooltip'),
+      onclick: () => handleSave(false, '', 0),
+    })
+  } else {
+    // 当前是发布状态，显示"保存为草稿"
+    menu.push({
+      icon: ['fas', 'fa-file-pen'],
+      text: t('page.save_as_draft'),
+      value: 'draft',
+      tooltip: t('page.save_as_draft_tooltip'),
+      onclick: () => handleSave(false, '', 1),
+    })
+  }
+
+  menu.push(
+    {
+      icon: ['fas', 'fa-comment-dots'],
+      text: t('page.save_and_notify'),
+      value: 'notify',
+      onclick: handleNotify,
+    },
+    {
+      icon: ['fas', 'fa-file-export'],
+      text: t('page.save_as_template'),
+      value: 'template',
+      onclick: handleSaveTemplate,
+    },
+    {
+      icon: isLocked.value ? ['fas', 'fa-unlock'] : ['fas', 'fa-lock'],
+      text: isLocked.value ? t('page.unlock') : t('page.lock_edit'),
+      value: 'lock',
+      onclick: handleToggleLock,
+    }
+  )
+
+  return menu
+})
 
 // 主题切换
 const handleToggleTheme = () => {
@@ -214,6 +260,64 @@ const handleToggleLock = async () => {
   } catch (e) {
     console.error('锁定操作失败:', e)
   }
+}
+
+// 保存为模板
+const handleSaveTemplate = async () => {
+  if (!spreadsheetObj.value) return
+  const content = JSON.stringify(spreadsheetObj.value.getData())
+  await SaveTemplateModal({
+    content,
+    onSuccess: () => {
+      Message.success(t('page.save_template_success'))
+    },
+  })
+}
+
+// 保存并通知
+const handleNotify = async () => {
+  await NotifyModal({
+    itemId: props.itemId,
+    pageId: props.editPageId,
+    onConfirm: async (content: string) => {
+      await handleSave(true, content)
+    },
+  })
+}
+
+// 从模板列表选择模板
+const handleOpenTemplateList = async () => {
+  await TemplateSelectModal({
+    itemId: Number(props.itemId),
+    onInsert: (content: string) => {
+      if (!spreadsheetObj.value) return
+      // 尝试解析为sheet数据
+      try {
+        const sheetData = JSON.parse(content)
+        if (Array.isArray(sheetData)) {
+          // 是sheet格式，获取当前数据，用模板覆盖当前active sheet
+          const currentData = spreadsheetObj.value.getData()
+          if (sheetData.length > 0 && currentData.length > 0) {
+            // 替换当前active sheet
+            const activeIndex = spreadsheetObj.value.activeSheetIndex || 0
+            currentData[activeIndex] = sheetData[0]
+            spreadsheetObj.value.loadData(currentData)
+            Message.success(t('page.insert_template_success'))
+          } else {
+            // 没有当前sheet，直接加载
+            spreadsheetObj.value.loadData(sheetData)
+            Message.success(t('page.insert_template_success'))
+          }
+        } else {
+          // 不是sheet格式
+          Message.warning(t('page.template_not_sheet'))
+        }
+      } catch (e) {
+        // 内容不是JSON，不适用于sheet
+        Message.warning(t('page.template_not_sheet'))
+      }
+    },
+  })
 }
 
 // 加载目录列表
@@ -288,7 +392,6 @@ const handleShowHistory = async () => {
   await HistoryModal({
     pageId: props.editPageId,
     onRestore: async (pageContent: string) => {
-      // 解析恢复的内容
       let sheetData: any = {}
       try {
         const decoded = pageContent
@@ -321,6 +424,7 @@ const loadPage = async () => {
       formCatId.value = Number(res.data.cat_id || 0)
       attachmentCount.value = res.data.attachment_count > 0 ? res.data.attachment_count : 0
       isLocked.value = res.data.is_locked === 1
+      isDraft.value = res.data.is_draft === 1
       const rawContent = res.data.page_content || ''
 
       // 解析表格数据
@@ -438,12 +542,18 @@ const startHeartBeat = () => {
 }
 
 // 保存
-const handleSave = async () => {
+const handleSave = async (notify = false, notifyContent = '', isDraftParam = -1) => {
   if (!spreadsheetObj.value) return
   saving.value = true
 
+  // 如果标题为空，使用默认标题
+  if (!pageTitle.value.trim()) {
+    isEditingTitle.value = false
+    pageTitle.value = t('page.untitled')
+  }
+
   try {
-    await request('/api/page/save', {
+    const requestData: Record<string, any> = {
       page_id: props.editPageId,
       page_title: pageTitle.value,
       item_id: props.itemId,
@@ -452,8 +562,18 @@ const handleSave = async () => {
       page_content: encodeURIComponent(
         JSON.stringify(spreadsheetObj.value.getData())
       ),
-      ext_info: JSON.stringify({ page_type: 'sheet' })
-    })
+      ext_info: JSON.stringify({ page_type: 'sheet' }),
+      is_notify: notify ? 1 : 0,
+      notify_content: notifyContent,
+    }
+
+    // 如果指定了草稿状态
+    if (isDraftParam >= 0) {
+      requestData.is_draft = isDraftParam
+      isDraft.value = isDraftParam === 1
+    }
+
+    await request('/api/page/save', requestData)
     Message.success(t('page.save_success'))
   } catch (error) {
     console.error('保存失败:', error)
@@ -470,25 +590,17 @@ const handleExport = () => {
   const xtos = (sdata: any) => {
     const out = XLSX.utils.book_new()
     sdata.forEach((xws: any) => {
-      const aoa: any[][] = []
+      const aoa: any[][] = [[]]
       const rowobj = xws.rows
       for (let ri = 0; ri < rowobj.len; ++ri) {
         const row = rowobj[ri]
         if (!row) continue
-        const cells: any[] = []
-        for (let ci = 0; ci < row.len; ++ci) {
-          const cell = row.cells[ci]
-          if (!cell) {
-            cells.push('')
-            continue
-          }
-          let value = cell.text || ''
-          if (cell.value !== undefined && cell.value !== null) {
-            value = cell.value
-          }
-          cells.push(value)
-        }
-        aoa.push(cells)
+        aoa[ri] = []
+        Object.keys(row.cells).forEach((k) => {
+          const idx = +k
+          if (isNaN(idx)) return
+          aoa[ri][idx] = row.cells[k].text
+        })
       }
       const ws = XLSX.utils.aoa_to_sheet(aoa)
       XLSX.utils.book_append_sheet(out, ws, xws.name)
@@ -504,38 +616,37 @@ const handleExport = () => {
   }
 }
 
-// 导入
+// 导入（追加sheet到现有数据中）
 const handleImport = (file: File) => {
   const reader = new FileReader()
   reader.onload = (e) => {
     const data = new Uint8Array(e.target?.result as ArrayBuffer)
     const workbook = XLSX.read(data, { type: 'array' })
 
-    const sto = (wb: any) => {
-      const sheets: any[] = []
+    const stox = (wb: any) => {
+      const out: any[] = []
       wb.SheetNames.forEach((name: string) => {
         const ws = wb.Sheets[name]
-        const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
-        const rows: any = { len: range.e.r + 1 }
-        for (let R = range.s.r; R <= range.e.r; ++R) {
+        const aoa = XLSX.utils.sheet_to_json(ws, { raw: false, header: 1 })
+        const rows: any = {}
+        aoa.forEach((r: any, i: number) => {
           const cells: any = {}
-          for (let C = range.s.c; C <= range.e.c; ++C) {
-            const addr = XLSX.utils.encode_cell({ r: R, c: C })
-            const cell = ws[addr]
-            if (!cell) continue
-            cells[C] = { text: String(cell.v || '') }
-          }
-          if (Object.keys(cells).length > 0) {
-            rows[R] = { cells }
-          }
-        }
-        sheets.push({ name, rows, cols: { len: range.e.c + 1 } })
+          ;(r as any[]).forEach((c: any, j: number) => {
+            cells[j] = { text: c }
+          })
+          rows[i] = { cells }
+        })
+        out.push({ name, rows })
       })
-      return sheets
+      return out
     }
 
     if (spreadsheetObj.value) {
-      spreadsheetObj.value.loadData(sto(workbook))
+      const currentData = spreadsheetObj.value.getData()
+      const importedSheets = stox(workbook)
+      const mergedData = [...currentData, ...importedSheets]
+      spreadsheetObj.value.loadData(mergedData)
+      Message.success(t('page.import_success'))
     }
   }
   reader.readAsArrayBuffer(file)
@@ -697,6 +808,11 @@ onBeforeUnmount(() => {
   margin: 0 8px;
   min-width: 200px;
   max-width: 30vw;
+}
+
+.draft-tag {
+  margin-left: 4px;
+  font-size: 12px;
 }
 
 .catalog-selector {
