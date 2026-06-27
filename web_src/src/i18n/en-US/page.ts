@@ -22,6 +22,7 @@ export default {
   s_number_explain: '(Optional) Default is 99, smaller numbers come first',
   history_version: 'History Version',
   new_page: 'New Page',
+  new_sheet: 'New Sheet',
   edit_page: 'Edit Page',
   delete_page: 'Delete Page',
   copy_page: 'Copy Page',

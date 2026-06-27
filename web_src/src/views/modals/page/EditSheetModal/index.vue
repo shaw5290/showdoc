@@ -1,37 +1,111 @@
 <template>
   <EditorModal :show="true">
     <div class="edit-sheet-modal">
-      <!-- 顶部工具栏 -->
+      <!-- 顶部工具栏（与MD编辑一致的风格） -->
       <div class="edit-header">
         <div class="header-left">
-          <a-button type="text" @click="handleClose">
-            <i class="far fa-xmark"></i>
+          <!-- 关闭按钮 -->
+          <a-button class="close-btn" @click="handleClose">
+            <i class="fas fa-times"></i>
           </a-button>
-          <span class="page-title">{{ pageTitle }}</span>
+
+          <!-- 页面标题编辑 -->
+          <template v-if="!isEditingTitle">
+            <a-tooltip :title="$t('page.click_to_edit_page_title')">
+              <span class="page-title" @click="isEditingTitle = true">
+                {{ pageTitle || $t('page.untitled') }}
+              </span>
+            </a-tooltip>
+          </template>
+          <CommonInput
+            v-else
+            v-model="pageTitle"
+            class="page-title-input"
+            :placeholder="$t('page.input_page_title')"
+            @blur="isEditingTitle = false"
+            @keyup.enter="isEditingTitle = false"
+          />
+
+          <!-- 目录选择 -->
+          <a-tooltip :title="$t('page.select_catalog')">
+            <span class="catalog-selector" @click="handleShowSelectCatalog">
+              <i class="fas fa-folder-open"></i>
+              {{ catalogName }}
+            </span>
+          </a-tooltip>
         </div>
+
         <div class="header-right">
-          <a-button type="primary" @click="handleSave" :loading="saving">
-            {{ $t('common.save') }}
-          </a-button>
+          <!-- 主题切换 -->
+          <a-tooltip
+            :title="
+              appStore.theme === 'light'
+                ? $t('common.dark_mode')
+                : $t('common.light_mode')
+            "
+            placement="bottom"
+          >
+            <div class="icon-item theme-toggle-item" @click="handleToggleTheme">
+              <i class="fas fa-circle-half-stroke"></i>
+            </div>
+          </a-tooltip>
+
+          <!-- 保存按钮（带下拉菜单） -->
+          <MenuButton
+            :text="$t('common.save')"
+            :theme="'dark'"
+            :list="saveMenuList"
+            :spinning="saving"
+            :left-icon="['fas', 'fa-save']"
+            :on-click="handleSave"
+          />
         </div>
       </div>
 
-      <!-- 表格操作栏 -->
-      <div class="sheet-toolbar">
-        <a-button size="small" @click="handleExport">
-          <i class="far fa-arrow-down-to-bracket"></i>
-          {{ $t('item.export') }}
-        </a-button>
+      <!-- 工具按钮组 -->
+      <div class="fun-btn-group">
+        <!-- 导出 -->
+        <CommonButton
+          :text="$t('item.export')"
+          :left-icon="['fas', 'fa-arrow-down-to-bracket']"
+          :theme="'light'"
+          @click="handleExport"
+        />
+
+        <!-- 导入 -->
         <a-upload
           :show-upload-list="false"
           :before-upload="handleImport"
           accept=".xlsx,.xls"
         >
-          <a-button size="small">
-            <i class="far fa-arrow-up-from-bracket"></i>
-            {{ $t('item.import') }}
-          </a-button>
+          <CommonButton
+            :text="$t('item.import')"
+            :left-icon="['fas', 'fa-arrow-up-from-bracket']"
+            :theme="'light'"
+          />
         </a-upload>
+
+        <!-- 附件 -->
+        <a-badge
+          :count="attachmentCount"
+          :offset="[10, 10]"
+          :color="'var(--icon-tag-color)'"
+        >
+          <CommonButton
+            :text="$t('page.attachments')"
+            :left-icon="['fas', 'fa-paperclip']"
+            :theme="'light'"
+            @click="handleShowAttachment"
+          />
+        </a-badge>
+
+        <!-- 历史版本 -->
+        <CommonButton
+          :text="$t('page.page_history_version')"
+          :left-icon="['fas', 'fa-history']"
+          :theme="'light'"
+          @click="handleShowHistory"
+        />
       </div>
 
       <!-- 表格编辑器 -->
@@ -43,12 +117,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { message } from 'ant-design-vue'
 import EditorModal from '@/components/EditorModal.vue'
+import CommonButton from '@/components/CommonButton.vue'
+import CommonInput from '@/components/CommonInput.vue'
+import MenuButton from '@/components/MenuButton.vue'
+import type { ContextmenuModalItemInterface } from '@/components/ContextmenuModal'
 import request from '@/utils/request'
 import { useAppStore } from '@/store/app'
+import Message from '@/components/Message'
+import AlertModal from '@/components/AlertModal'
+import AttachmentListModal from '@/views/modals/page/AttachmentListModal/index'
+import HistoryModal from '@/views/modals/page/HistoryModal/index'
+import CatalogSelectModal from '@/views/modals/catalog/SelectCatalogModal/index'
 
 declare const x_spreadsheet: any
 declare const XLSX: any
@@ -66,17 +149,165 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const { t } = useI18n()
+const appStore = useAppStore()
+const originalTheme = ref<'light' | 'dark'>(appStore.theme)
 const pageTitle = ref('')
+const formCatId = ref(0)
+const catalogs = ref<any[]>([])
 const spreadsheetObj = ref<any>(null)
 const saving = ref(false)
 const sheetIsLock = ref(0)
 const sheetIntervalId = ref(0)
-const appStore = useAppStore()
-const originalTheme = ref<'light' | 'dark'>(appStore.theme)
+const isEditingTitle = ref(false)
+const attachmentCount = ref(0)
 
-// 保存原始主题，表格编辑需要浅色主题
+// 表格编辑需要浅色主题
 if (appStore.theme === 'dark') {
   appStore.setTheme('light')
+}
+
+// 目录名称
+const catalogName = computed(() => {
+  const cat = catalogs.value.find((c) => c.catId === formCatId.value)
+  return cat ? cat.title : t('catalog.root_catalog')
+})
+
+// 保存菜单
+const saveMenuList = computed<ContextmenuModalItemInterface[]>(() => [
+  {
+    icon: ['fas', 'fa-save'],
+    text: t('page.save'),
+    value: 'save',
+    onclick: () => handleSave(),
+  },
+  {
+    icon: isLocked.value ? ['fas', 'fa-unlock'] : ['fas', 'fa-lock'],
+    text: isLocked.value ? t('page.unlock') : t('page.lock_edit'),
+    value: 'lock',
+    onclick: handleToggleLock,
+  },
+])
+
+const isLocked = ref(false)
+
+// 主题切换
+const handleToggleTheme = () => {
+  appStore.toggleTheme()
+}
+
+// 锁定/解锁
+const handleToggleLock = async () => {
+  if (!props.editPageId) return
+  try {
+    const params: any = {
+      page_id: String(props.editPageId),
+      item_id: String(props.itemId),
+    }
+    if (isLocked.value) {
+      params.lock_to = 1000
+    }
+    const res = await request('/api/page/setLock', params, 'post', false)
+    if (res.error_code === 0) {
+      isLocked.value = !isLocked.value
+      Message.success(isLocked.value ? t('page.lock_success') : t('page.unlock_success'))
+    }
+  } catch (e) {
+    console.error('锁定操作失败:', e)
+  }
+}
+
+// 加载目录列表
+const loadCatalogs = async () => {
+  if (!props.itemId) return
+  try {
+    const data = await request('/api/catalog/catListName', {
+      item_id: String(props.itemId),
+    }, 'post', false)
+    if (data.error_code === 0 && data.data) {
+      catalogs.value = [
+        { catId: 0, title: t('catalog.root_catalog') },
+        ...(data.data || []).map((cat: any) => ({
+          catId: Number(cat.cat_id),
+          title: cat.cat_name,
+        })),
+      ]
+    }
+  } catch (e) {
+    console.error('获取目录列表失败:', e)
+  }
+}
+
+// 目录选择
+const handleShowSelectCatalog = async () => {
+  const newCatId = await CatalogSelectModal({
+    itemId: props.itemId,
+    catId: formCatId.value,
+  })
+  if (newCatId > 0) {
+    formCatId.value = newCatId
+    await loadCatalogs()
+  }
+}
+
+// 附件
+const handleShowAttachment = async () => {
+  if (!props.editPageId) {
+    await AlertModal(t('page.please_save_page_first'))
+    return
+  }
+  await AttachmentListModal({
+    itemId: props.itemId,
+    pageId: props.editPageId,
+    manage: true,
+    onClose: () => {
+      fetchAttachmentCount()
+    },
+  })
+}
+
+const fetchAttachmentCount = async () => {
+  if (!props.editPageId) return
+  try {
+    const data = await request('/api/page/info', {
+      page_id: String(props.editPageId),
+    }, 'post', false)
+    if (data.error_code === 0 && data.data) {
+      attachmentCount.value = data.data.attachment_count > 0 ? data.data.attachment_count : 0
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+// 历史版本
+const handleShowHistory = async () => {
+  if (!props.editPageId) {
+    await AlertModal(t('page.please_save_page_first'))
+    return
+  }
+  await HistoryModal({
+    pageId: props.editPageId,
+    onRestore: async (pageContent: string) => {
+      // 解析恢复的内容
+      let sheetData: any = {}
+      try {
+        const decoded = pageContent
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#039;/g, "'")
+          .replace(/&apos;/g, "'")
+        sheetData = JSON.parse(decoded)
+      } catch (e) {
+        console.error('解析历史版本数据失败:', e)
+      }
+      if (spreadsheetObj.value) {
+        spreadsheetObj.value.loadData(sheetData)
+      }
+      Message.success(t('page.restore_success'))
+    },
+  })
 }
 
 // 加载页面内容
@@ -87,13 +318,15 @@ const loadPage = async () => {
     })
     if (res.error_code === 0 && res.data) {
       pageTitle.value = res.data.page_title || ''
+      formCatId.value = Number(res.data.cat_id || 0)
+      attachmentCount.value = res.data.attachment_count > 0 ? res.data.attachment_count : 0
+      isLocked.value = res.data.is_locked === 1
       const rawContent = res.data.page_content || ''
 
       // 解析表格数据
       let sheetData: any = {}
       if (rawContent) {
         try {
-          // 解码 HTML 实体
           const decoded = rawContent
             .replace(/&amp;/g, '&')
             .replace(/&lt;/g, '<')
@@ -155,13 +388,6 @@ const initEditor = (data: any) => {
         width: () => container.offsetWidth
       }
     }).loadData(data)
-
-    // 监听单元格编辑
-    if (spreadsheetObj.value) {
-      spreadsheetObj.value.on('cell-edited', () => {
-        // 自动保存可以在这里实现
-      })
-    }
   } catch (e) {
     console.error('初始化表格编辑器失败:', e)
   }
@@ -221,13 +447,14 @@ const handleSave = async () => {
       page_id: props.editPageId,
       page_title: pageTitle.value,
       item_id: props.itemId,
+      cat_id: formCatId.value,
       is_urlencode: 1,
       page_content: encodeURIComponent(
         JSON.stringify(spreadsheetObj.value.getData())
       ),
       ext_info: JSON.stringify({ page_type: 'sheet' })
     })
-    message.success(t('common.save_success'))
+    Message.success(t('page.save_success'))
   } catch (error) {
     console.error('保存失败:', error)
     message.error(t('common.save_failed'))
@@ -317,7 +544,6 @@ const handleImport = (file: File) => {
 
 // 关闭
 const handleClose = async () => {
-  // 销毁表格实例
   if (spreadsheetObj.value) {
     try {
       spreadsheetObj.value.destroy()
@@ -327,10 +553,7 @@ const handleClose = async () => {
     spreadsheetObj.value = null
   }
 
-  // 停止心跳
   clearInterval(sheetIntervalId.value)
-
-  // 解锁
   await unlock()
 
   // 恢复主题
@@ -360,10 +583,12 @@ const handleKeydown = (e: KeyboardEvent) => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('beforeunload', unlockOnClose)
   window.addEventListener('keydown', handleKeydown)
-  loadPage()
+  await loadCatalogs()
+  await loadPage()
+  await fetchAttachmentCount()
 })
 
 onBeforeUnmount(() => {
@@ -383,37 +608,149 @@ onBeforeUnmount(() => {
 
 .edit-header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
+  align-items: center;
+  padding: 16px 24px;
+  background-color: var(--color-bg-primary);
   border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
 
-  .header-left {
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  .icon-item {
+    width: 40px;
+    height: 40px;
     display: flex;
     align-items: center;
-    gap: 12px;
+    justify-content: center;
+    background-color: var(--color-bg-secondary);
+    border-radius: 8px;
+    box-shadow: var(--shadow-xs);
+    cursor: pointer;
+    transition: all 0.15s ease;
 
-    .page-title {
+    &:hover {
+      background-color: var(--hover-overlay);
+      box-shadow: var(--shadow-sm);
+    }
+
+    i {
+      color: var(--color-text-primary);
       font-size: 16px;
-      font-weight: 500;
     }
   }
 
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+  .theme-toggle-item i {
+    color: var(--color-orange);
   }
 }
 
-.sheet-toolbar {
+.close-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 16px;
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
+  box-shadow: var(--shadow-xs);
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: var(--hover-overlay);
+    box-shadow: var(--shadow-sm);
+    color: var(--color-text-primary);
+    border-color: var(--color-border);
+  }
+}
+
+.page-title {
+  margin: 0 8px;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: var(--hover-overlay);
+  }
+}
+
+.page-title-input {
+  margin: 0 8px;
+  min-width: 200px;
+  max-width: 30vw;
+}
+
+.catalog-selector {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  transition: all 0.15s ease;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  i {
+    margin-right: 6px;
+    font-size: 14px;
+  }
+
+  &:hover {
+    background-color: var(--hover-overlay);
+    border-color: var(--color-active);
+    color: var(--color-text-primary);
+    box-shadow: var(--shadow-sm);
+  }
+}
+
+.fun-btn-group {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
+  gap: 10px;
+  padding: 12px 24px;
+  background-color: var(--color-bg-primary);
   border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
+
+  .ant-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    i {
+      margin-right: 4px;
+    }
+  }
+
+  .ant-dropdown-trigger {
+    display: inline-flex;
+    align-items: center;
+  }
 }
 
 .edit-content {
@@ -425,6 +762,27 @@ onBeforeUnmount(() => {
   .sheet-editor {
     width: 100%;
     height: 100%;
+  }
+}
+
+// 响应式
+@media (max-width: 1200px) {
+  .edit-header {
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+
+  .header-left,
+  .header-right {
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .fun-btn-group {
+    flex-wrap: wrap;
+    padding: 12px 16px;
   }
 }
 </style>

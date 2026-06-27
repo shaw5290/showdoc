@@ -23,6 +23,7 @@ export default {
   history_version: '历史版本',
   page_history_version: '历史版本',
   new_page: '新建页面',
+  new_sheet: '新建表格',
   edit_page: '编辑页面',
   delete_page: '删除页面',
   copy_page: '复制页面',
